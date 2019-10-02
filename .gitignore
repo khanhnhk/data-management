@@ -1,3 +1,5 @@
 *.json
 /env
 /dashboards
+*.pickle
+pandas-to-postgres/
