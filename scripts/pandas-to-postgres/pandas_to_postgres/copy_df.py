@@ -32,8 +32,6 @@ class DataFrameCopy(BaseCopy):
         self.rows = self.df.shape[0]
 
     def copy(self, functions=[cast_pandas]):
-        # self.drop_fks()
-        # self.drop_pk()
         self.df = self.data_formatting(self.df, functions=functions)
         with self.conn.begin():
             # self.truncate()
@@ -50,6 +48,4 @@ class DataFrameCopy(BaseCopy):
 
             self.logger.info("All chunks copied ({} rows)".format(self.rows))
 
-        # self.create_pk()
-        # self.create_fks()
         self.analyze()
