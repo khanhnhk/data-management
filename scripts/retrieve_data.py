@@ -1,26 +1,38 @@
 from utils import *
+import pandas as pd
+from gspread_pandas import Spread, Client
+import re
+import json
 
 
-CONF_FILE_PATH = '/Users/khanhnguyen/Documents/Projects/data-management/scripts/conf.json'
-scopes = [
-    'https://spreadsheets.google.com/feeds',
-    'https://www.googleapis.com/auth/drive',
-]
+def get_raw_data_sheet(spreadsheet, client):
+    spread = Spread(spread=spreadsheet)
+    sheets = spread.sheets
+    print(sheets[0].__dict__)
+    raw = [x for x in sheets if x.__dict__['_properties']
+           ['title'].replace(' ', '').lower() == 'rawdata']
+    print(sheets)
+    print(raw[0])
+
+
+def move_dashboards():
+    client = Client()
+    # Get Dashboard links:
+    dashboard_links_sheet = Spread(spread='1geNkTULCutp7PgcqiuMKaNkH7Ynp1nGu3oX1NqoXHBA',
+                                   client=client,
+                                   sheet='Dashboard').sheet_to_df()
+    sheet_ids = dashboard_links_sheet['Link dashboard'].str.extract(
+        '/d/([^/]+)', expand=False).unique().tolist()
+    for sheet_id in sheet_ids:
+        try:
+            client.move_file(sheet_id,
+                             '/New Dashboards')
+        except Exception as e:
+            print('Error with sheet id:' + str(sheet_id))
+            pass
+
 
 if __name__ == '__main__':
-    try:
-        connection = connect_postgres(conf_file=CONF_FILE_PATH)
-        cursor = connection.cursor()
-        # Print PostgreSQL version
-        cursor.execute("SELECT version();")
-        record = cursor.fetchone()
-        print("You are connected to - ", record, "\n")
-
-    except (Exception, psycopg2.Error) as error:
-        print("Error while connecting to PostgreSQL", error)
-    finally:
-        # closing database connection.
-        if(connection):
-            cursor.close()
-            connection.close()
-            print("PostgreSQL connection is closed")
+    client = Client()
+    get_raw_data_sheet(
+        spreadsheet='1sfBw-tB5Ar3dkLxpo5gV7vkFL5mC2x-_Ro41ikqQ21o', client=client)
