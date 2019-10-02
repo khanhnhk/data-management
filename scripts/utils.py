@@ -4,7 +4,7 @@ import pickle
 import os.path
 import csv
 from io import StringIO
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, Table, Column, Integer, String, MetaData
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
@@ -43,11 +43,16 @@ def authorize_google_sheets(conf_file, scopes):
 def connect_postgres(conf_file, workspace='dashboard_digital_ocean'):
     with open(conf_file, 'r') as f:
         conf = json.load(f)['DATABASE'][workspace]
-    connection = psycopg2.connect(user=conf['user'],
-                                  password=conf['password'],
-                                  host=conf['host'],
-                                  port=conf['port'],
-                                  database=conf.get('database', ''))
+    user = conf['user']
+    password = conf['password']
+    host = conf['host']
+    port = conf['port']
+    database = conf.get('database', '')
+
+    engine = create_engine(
+        rf'postgresql+psycopg2://{user}:{password}@{host}:{port}/{database}')
+
+    connection = engine.connect()
     return connection
 
 
