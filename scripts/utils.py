@@ -1,5 +1,5 @@
 import json
-import psycopg2
+import psycopg2 as pg
 import pickle
 import os.path
 import csv
@@ -54,6 +54,36 @@ def connect_postgres(conf_file, workspace='dashboard_digital_ocean'):
 
     connection = engine.connect()
     return connection
+
+
+def connect_postgres_pg(conf_file, workspace='dashboard_digital_ocean'):
+    with open(conf_file, 'r') as f:
+        conf = json.load(f)['DATABASE'][workspace]
+    user = conf['user']
+    password = conf['password']
+    host = conf['host']
+    port = conf['port']
+    database = conf.get('database', '')
+
+    engine = create_engine(
+        rf'postgresql+psycopg2://{user}:{password}@{host}:{port}/{database}')
+
+    connection = engine.connect()
+    return connection
+
+
+def setup_engine(conf_file, workspace='dashboard_digital_ocean'):
+    with open(conf_file, 'r') as f:
+        conf = json.load(f)['DATABASE'][workspace]
+    user = conf['user']
+    password = conf['password']
+    host = conf['host']
+    port = conf['port']
+    database = conf.get('database', '')
+
+    engine = create_engine(
+        rf'postgresql+psycopg2://{user}:{password}@{host}:{port}/{database}')
+    return engine
 
 
 def psql_insert_copy(table, conn, keys, data_iter):

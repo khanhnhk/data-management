@@ -3,3 +3,6 @@
 /dashboards
 *.pickle
 pandas-to-postgres/
+*mongo*
+*.csv
+test*
