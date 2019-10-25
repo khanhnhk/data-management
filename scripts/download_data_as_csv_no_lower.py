@@ -1,4 +1,3 @@
-from pandas.core.common import _maybe_box_datetimelike
 from utils import authorize_google_sheets
 from gspread_pandas import Spread, Client
 import pandas as pd
@@ -6,6 +5,12 @@ import json
 import numpy as np
 import os
 from copy_sheet import *
+from sqlalchemy import create_engine
+import io
+from io import StringIO
+import psycopg2
+import csv
+
 
 # AUTHORIZATION:
 creds = None
@@ -26,6 +31,25 @@ if not creds or not creds.valid:
     # Save the credentials for the next run
     with open('token.pickle', 'wb') as token:
         pickle.dump(creds, token)
+
+def psql_insert_copy(table, conn, keys, data_iter):
+    # gets a DBAPI connection that can provide a cursor
+    dbapi_conn = conn.connection
+    with dbapi_conn.cursor() as cur:
+        s_buf = StringIO()
+        writer = csv.writer(s_buf)
+        writer.writerows(data_iter)
+        s_buf.seek(0)
+
+        columns = ', '.join('"{}"'.format(k) for k in keys)
+        if table.schema:
+            table_name = '{}.{}'.format(table.schema, table.name)
+        else:
+            table_name = table.name
+
+        sql = 'COPY {} ({}) FROM STDIN WITH CSV'.format(
+            table_name, columns)
+        cur.copy_expert(sql=sql, file=s_buf)
 
 
 def create_spread_in_folder(spread_name, client, path='/'):
@@ -160,7 +184,7 @@ def get_kpi_sheet_to_df(spreadsheet, client, cols_to_check, extract_cols=None):
             e) + f' while getting KPI sheet on {project_name}: https://docs.google.com/spreadsheets/d/{spreadsheet}' )
 
 
-def update_raw_data(spreadsheet, client, copy=False, path='/Tableau Data New/Raw Data2', extract_cols=None):
+def update_raw_data(spreadsheet, client, copy=False, path='/Tableau Data New/Raw Data2', extract_cols=None, engine=None):
     if extract_cols is None:
         extract_cols = []
     else:
@@ -182,6 +206,11 @@ def update_raw_data(spreadsheet, client, copy=False, path='/Tableau Data New/Raw
 
             spread.df_to_sheet(df=df, index=False,
                             replace=True, sheet=project_name)
+
+        if engine is not None:
+            df.columns = [x.lower().replace(' ', '_') for x in list(df.columns)]
+            df.to_sql('pmax_performance', engine, method=psql_insert_copy, if_exists='append', index=None)
+
         print(f'Updated RawData {project_name} (ID: {project_id})')
     except Exception as e:
         print('Got ' + str(e) + f' while updating Raw Data for {spreadsheet} )')
@@ -191,7 +220,7 @@ def update_raw_data(spreadsheet, client, copy=False, path='/Tableau Data New/Raw
     
 
 
-def update_kpi(spreadsheet, client, target_spreadsheet_name=None, path='/Tableau Data New/KPI', copy=False, extract_cols=None):
+def update_kpi(spreadsheet, client, target_spreadsheet_name=None, path='/Tableau Data New/KPI', copy=False, extract_cols=None, engine=None):
     if extract_cols is None:
         extract_cols = []
     else:
@@ -212,10 +241,14 @@ def update_kpi(spreadsheet, client, target_spreadsheet_name=None, path='/Tableau
         # df.to_csv(os.path.join(BASE_DIR, 'kpi_v2',
         #                        f'KPI v3 - {project_name}.csv'), index=None)
         print(f'Updated KPI {project_name} (ID: {project_id} )')
+
+        if engine is not None:
+            df.columns = [x.lower().replace(' ', '_') for x in list(df.columns)]
+            df.to_sql('pmax_kpi', engine, method=psql_insert_copy, if_exists='append', index=None)
+
     except Exception as e:
         print('Got ' + str(e) + f' while updating KPI for {spreadsheet} ')
 
-    
     
 
 
