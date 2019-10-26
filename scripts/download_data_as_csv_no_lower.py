@@ -63,11 +63,7 @@ def create_spread_in_folder(spread_name, client, path='/'):
     return spread
 
 
-def get_raw_data_sheet_to_df(spreadsheet, client, cols_to_check, extract_cols=None):
-    if extract_cols is None:
-        extract_cols = []
-    else:
-        extract_cols = extract_cols
+def get_raw_data_sheet_to_df(spreadsheet, client, cols_to_check):
     
     spread = Spread(spread=spreadsheet)
 
@@ -92,7 +88,7 @@ def get_raw_data_sheet_to_df(spreadsheet, client, cols_to_check, extract_cols=No
 
         # Check for column names:
         df_cols_lower = list(map(lambda x: x.lower(), list(df.columns)))
-        cols_to_check = list(map(lambda x: x.lower(), list(set(cols_to_check + extract_cols))))
+        cols_to_check = list(map(lambda x: x.lower(), list(set(cols_to_check))))
 
         missing_cols = []
         for col in cols_to_check:
@@ -107,12 +103,11 @@ def get_raw_data_sheet_to_df(spreadsheet, client, cols_to_check, extract_cols=No
         # df.columns = map(lambda x: x.replace(
         #     ' ', '_').replace('.', '').lower(), df.columns)
         df = df.loc[df['Date'].notnull(), ~df.columns.duplicated(keep='first')]
-        if extract_cols is not None:
-            df = df.reindex(columns=extract_cols)
-    
         # Add additional fields for future lookup and update
         df['_meta_spreadsheetID'] = project_id
         df['_meta_projectName'] = project_name
+        df['_row_id'] = '__'.join(['', project_id, '']) 
+
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
         for col in ['Revenue', 'Cost', 'Profit']:
             df[col] = pd.to_numeric(df[col].astype(
@@ -124,11 +119,7 @@ def get_raw_data_sheet_to_df(spreadsheet, client, cols_to_check, extract_cols=No
             e) + f' while getting RawData sheet on {project_name}: https://docs.google.com/spreadsheets/d/{spreadsheet}' )
 
 
-def get_kpi_sheet_to_df(spreadsheet, client, cols_to_check, extract_cols=None):
-    if extract_cols is None:
-        extract_cols = []
-    else:
-        extract_cols = extract_cols
+def get_kpi_sheet_to_df(spreadsheet, client, cols_to_check):
     
     spread = Spread(spread=spreadsheet)
 
@@ -153,7 +144,7 @@ def get_kpi_sheet_to_df(spreadsheet, client, cols_to_check, extract_cols=None):
 
         # Check for column names:
         df_cols_lower = list(map(lambda x: x.lower(), list(df.columns)))
-        cols_to_check = list(map(lambda x: x.lower(), list(set(cols_to_check + extract_cols))))
+        cols_to_check = list(map(lambda x: x.lower(), list(set(cols_to_check))))
 
         missing_cols = []
         for col in cols_to_check:
@@ -168,11 +159,13 @@ def get_kpi_sheet_to_df(spreadsheet, client, cols_to_check, extract_cols=None):
         # df.columns = map(lambda x: x.replace(
         #     ' ', '_').replace('.', '').lower(), df.columns)
         df = df.loc[df['Date'].notnull(), ~df.columns.duplicated(keep='first')]
-        if extract_cols is not None:
-            df = df.reindex(columns=extract_cols)
+        
         # Add additional fields for future lookup and update
         df['_meta_spreadsheetID'] = project_id
         df['_meta_projectName'] = project_name
+        df['_row_id'] = '__'.join(['', 'abc', ''])
+        df['_row_id'] = df['_row_id'] + df.index
+
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
         for col in ['Revenue', 'Cost', 'Profit']:
             df[col] = pd.to_numeric(df[col].astype(
@@ -195,9 +188,15 @@ def update_raw_data(spreadsheet, client, copy=False, path='/Tableau Data New/Raw
                                   cols_to_check=[
                                       'Charge Code', 'Client', 'Function', 'Date',
                                       'Channel', 'Revenue', 'Cost', 'Profit'
-                                  ], extract_cols=extract_cols)
+                                  ])
+        
         project_name = df['_meta_projectName'][0]
         project_id = df['_meta_spreadsheetID'][0]
+        
+        
+        _df_sub_json = df.reindex(columns=[x for x in list(df.columns) if x not in extract_cols]).to_json(orient='split')
+
+        df = df.reindex(columns=extract_cols)
         if copy:
             spread = create_spread_in_folder(
                 spread_name=f'RawData v3 - {project_name}', client=client, path=path)
@@ -209,7 +208,12 @@ def update_raw_data(spreadsheet, client, copy=False, path='/Tableau Data New/Raw
 
         if engine is not None:
             df.columns = [x.lower().replace(' ', '_') for x in list(df.columns)]
-            df.to_sql('pmax_performance', engine, method=psql_insert_copy, if_exists='append', index=None)
+            # Update main df:
+            df.to_sql('pmax_project_performance', engine, method=psql_insert_copy, if_exists='append', index=None)
+
+
+            # Update sub df
+
 
         print(f'Updated RawData {project_name} (ID: {project_id})')
     except Exception as e:
@@ -244,7 +248,7 @@ def update_kpi(spreadsheet, client, target_spreadsheet_name=None, path='/Tableau
 
         if engine is not None:
             df.columns = [x.lower().replace(' ', '_') for x in list(df.columns)]
-            df.to_sql('pmax_kpi', engine, method=psql_insert_copy, if_exists='append', index=None)
+            df.to_sql('pmax_project_kpi', engine, method=psql_insert_copy, if_exists='append', index=None)
 
     except Exception as e:
         print('Got ' + str(e) + f' while updating KPI for {spreadsheet} ')
