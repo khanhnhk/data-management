@@ -1,5 +1,6 @@
 from utils import authorize_google_sheets
 from gspread_pandas import Spread, Client
+
 import pandas as pd
 import json
 import numpy as np
@@ -66,7 +67,15 @@ def create_spread_in_folder(spread_name, client, path='/'):
     return spread
 
 
-def get_raw_data_sheet_to_df(spreadsheet, client, cols_to_check):
+def share_to_service_acc(spreadsheet, client):
+    spread = Spread(spread=spreadsheet)
+    spread.share('gdocsync@pmaxcrm.iam.gserviceaccount.com',
+                 perm_type='user',
+                 role='reader',
+                 notify=False)
+
+
+def get_raw_data_sheet_to_df(spreadsheet, client, cols_to_check, rename_title=None):
 
     spread = Spread(spread=spreadsheet)
 
@@ -79,18 +88,23 @@ def get_raw_data_sheet_to_df(spreadsheet, client, cols_to_check):
     sheets = spread.sheets
     try:
         raw_data = [x for x in sheets if 'rawdata' in x.__dict__['_properties']
-               ['title'].replace(' ', '').replace('.', '').lower(
+                    ['title'].replace(' ', '').replace('.', '').lower(
         ) and 'pivot' not in x.__dict__['_properties']
             ['title'].replace(' ', '').replace('.', '').lower()]
 
         raw_data.sort(key=lambda x: len(x.__dict__['_properties']
-                                   ['title'].replace(' ', '').replace('.', '')), reverse=False)
+                                        ['title'].replace(' ', '').replace('.', '')), reverse=False)
+        raw_data_sheet = raw_data[0]
+        if rename_title is not None:
+            raw_data_sheet.update_title(rename_title)
+
         df = spread.sheet_records_to_df(
-            empty2zero=False, header_rows=1, sheet=raw_data[0],
+            empty2zero=False, header_rows=1, sheet=raw_data_sheet,
             default_blank=np.nan)
 
         # Check for column names:
-        df_cols_lower = list(map(lambda x: x.strip().lower(), list(df.columns)))
+        df_cols_lower = list(
+            map(lambda x: x.strip().lower(), list(df.columns)))
         cols_to_check = list(
             map(lambda x: x.strip().lower(), list(set(cols_to_check))))
         df.columns = df_cols_lower
@@ -126,7 +140,7 @@ def get_raw_data_sheet_to_df(spreadsheet, client, cols_to_check):
             e) + f' while getting RawData sheet on {project_name}: https://docs.google.com/spreadsheets/d/{spreadsheet}')
 
 
-def get_kpi_sheet_to_df(spreadsheet, client, cols_to_check):
+def get_kpi_sheet_to_df(spreadsheet, client, cols_to_check, rename_title=None):
 
     spread = Spread(spread=spreadsheet)
 
@@ -145,12 +159,17 @@ def get_kpi_sheet_to_df(spreadsheet, client, cols_to_check):
 
         kpi.sort(key=lambda x: len(x.__dict__['_properties']
                                    ['title'].replace(' ', '').replace('.', '')), reverse=False)
+        kpi_sheet = kpi[0]
+        if rename_title is not None:
+            kpi_sheet.update_title(rename_title)
+
         df = spread.sheet_records_to_df(
-            empty2zero=False, header_rows=1, sheet=kpi[0],
+            empty2zero=False, header_rows=1, sheet=kpi_sheet,
             default_blank=np.nan)
 
         # Check for column names:
-        df_cols_lower = list(map(lambda x: x.strip().lower(), list(df.columns)))
+        df_cols_lower = list(
+            map(lambda x: x.strip().lower(), list(df.columns)))
         cols_to_check = list(
             map(lambda x: x.strip().lower(), list(set(cols_to_check))))
         df.columns = df_cols_lower
@@ -187,6 +206,56 @@ def get_kpi_sheet_to_df(spreadsheet, client, cols_to_check):
             e) + f' while getting KPI sheet on {project_name}: https://docs.google.com/spreadsheets/d/{spreadsheet}')
 
 
+def update_sheet_title(spreadsheet, raw_title=None, kpi_title=None):
+    try:
+        spread = Spread(spreadsheet)
+        # Get metadata:
+        meta = spread.__dict__.get('_spread_metadata')
+        project_id = meta.get('spreadsheetId')
+        project_name = meta.get('properties').get('title')
+
+        # Locate KPI sheet
+        sheets = spread.sheets
+        try:
+            raw_data = [x for x in sheets if 'rawdata' in x.__dict__['_properties']
+                        ['title'].replace(' ', '').replace('.', '').lower(
+            ) and 'pivot' not in x.__dict__['_properties']
+                ['title'].replace(' ', '').replace('.', '').lower()]
+
+            raw_data.sort(key=lambda x: len(x.__dict__['_properties']
+                                            ['title'].replace(' ', '').replace('.', '')), reverse=False)
+            if len(raw_data) != 0:
+                raw_data_sheet = raw_data[0]
+                raw_data_sheet.update_title(str(raw_title))
+        except Exception as e:
+            print(e)
+            print('Could not find Raw data sheet in project' + str(project_name) +
+                  'at ' + f'https://docs.google.com/spreadsheets/d/{project_id}')
+
+        try:
+
+            # Locate KPI sheet:
+            kpi = [x for x in sheets if 'kpi' in x.__dict__['_properties']
+                   ['title'].replace(' ', '').replace('.', '').lower(
+            ) and 'pivot' not in x.__dict__['_properties']
+                ['title'].replace(' ', '').replace('.', '').lower()]
+
+            kpi.sort(key=lambda x: len(x.__dict__['_properties']
+                                       ['title'].replace(' ', '').replace('.', '')), reverse=False)
+            if len(kpi) != 0:
+                kpi_sheet = kpi[0]
+                kpi_sheet.update_title(str(kpi_title))
+
+        except Exception as e:
+            print(e)
+            print('Could not find KPI sheet in project' + str(project_name) +
+                  'at ' + f'https://docs.google.com/spreadsheets/d/{project_id}')
+    except Exception as e:
+        print(e)
+        print('Error in project' + str(project_name) +
+              'at ' + f'https://docs.google.com/spreadsheets/d/{project_id}')
+
+
 def update_raw_data(spreadsheet, client, copy=False, path='/Tableau Data New/Raw Data2', extract_cols=None, engine=None):
     if extract_cols is None:
         extract_cols = []
@@ -196,15 +265,15 @@ def update_raw_data(spreadsheet, client, copy=False, path='/Tableau Data New/Raw
 
     try:
         df = get_raw_data_sheet_to_df(spreadsheet=spreadsheet, client=client,
-                                  cols_to_check=[
-                                      'Charge Code', 'Client', 'Function', 'date',
-                                      'Channel', 'revenue', 'cost', 'profit'
-                                  ])
+                                      cols_to_check=[
+                                          'Charge Code', 'Client', 'Function', 'date',
+                                          'Channel', 'revenue', 'cost', 'profit'
+                                      ])
 
         project_name = df['_meta_projectname'][0]
         project_id = df['_meta_spreadsheetid'][0]
         df.columns = [x.strip().lower().replace(' ', '_').replace('.', '_')
-                              for x in list(df.columns)]
+                      for x in list(df.columns)]
         df = df.loc[:, ~df.columns.duplicated()]
         # sub_df = pd.melt(df, id_vars='_ref_id', value_vars=[
         #       x for x in list(df.columns) if x not in extract_cols and x not in ['_meta_spreadsheetid', '_meta_projectname', '_ref_id', '']],
@@ -219,28 +288,17 @@ def update_raw_data(spreadsheet, client, copy=False, path='/Tableau Data New/Raw
                 '_spread_metadata')['spreadsheetId']
 
             spread.df_to_sheet(df=df, index=False,
-                            replace=True, sheet=project_name)
+                               replace=True, sheet=project_name)
 
         if engine is not None:
             # Update main df:
             df.to_sql('pmax_project_performance', engine,
                       method=psql_insert_copy, if_exists='append', index=None)
-            # Session = sessionmaker()
-            # Session.configure(bind=engine)
-            # session = Session()
-            # session.bulk_insert_mappings('pmax_project_performance', df.to_dict(orient="records"))
-            # session.close()
-            # Update sub df:
-            # sub_df.to_sql('pmax_project_performance_sub', engine,
-            #               method=psql_insert_copy, if_exists='append', index=None)
 
         print(f'Updated RawData {project_name} (ID: {project_id})')
     except Exception as e:
         print('Got ' + str(e) +
               f' while updating Raw Data for {spreadsheet} )')
-
-    # df.to_csv(os.path.join(BASE_DIR, 'raw_data_v2',
-                        #    f'RawData2 - {project_name}.csv'), index=None)
 
 
 def update_kpi(spreadsheet, client, target_spreadsheet_name=None, path='/Tableau Data New/KPI', copy=False, extract_cols=None, engine=None):
@@ -252,15 +310,15 @@ def update_kpi(spreadsheet, client, target_spreadsheet_name=None, path='/Tableau
 
     try:
         df = get_kpi_sheet_to_df(spreadsheet=spreadsheet, client=client,
-                                cols_to_check=[
-                                      'Charge Code', 'Client', 'Function', 'date',
-                                      'Channel', 'revenue', 'cost', 'profit'
-                                  ])
+                                 cols_to_check=[
+                                     'Charge Code', 'Client', 'Function', 'date',
+                                     'Channel', 'revenue', 'cost', 'profit'
+                                 ])
         project_name = df['_meta_projectname'][0]
         project_id = df['_meta_spreadsheetid'][0]
         df.columns = [x.strip().lower().replace(' ', '_').replace('.', '_')
-                            for x in list(df.columns)]
-        df = df.loc[:, (~df.columns.duplicated()) ]
+                      for x in list(df.columns)]
+        df = df.loc[:, (~df.columns.duplicated())]
         # sub_df = pd.melt(df, id_vars='_ref_id', value_vars=[
         #       x for x in list(df.columns) if x not in extract_cols and x not in ['_meta_spreadsheetid', '_meta_projectname', '_ref_id', '']],
         #       var_name='key', value_name='value').dropna(how='any')
@@ -268,10 +326,10 @@ def update_kpi(spreadsheet, client, target_spreadsheet_name=None, path='/Tableau
         df = df.reindex(columns=[x for x in list(
             set(extract_cols + ['_meta_spreadsheetid', '_meta_projectname', '_ref_id']))])
         if copy:
-            spread=create_spread_in_folder(
+            spread = create_spread_in_folder(
                 spread_name=f'KPI v3 - {project_name}', client=client, path=path)
             spread.df_to_sheet(df=df, index=False,
-                            replace=True, sheet=project_id)
+                               replace=True, sheet=project_id)
         # df.to_csv(os.path.join(BASE_DIR, 'kpi_v2',
         #                        f'KPI v3 - {project_name}.csv'), index=None)
         print(f'Updated KPI {project_name} (ID: {project_id} )')
@@ -289,50 +347,8 @@ def update_kpi(spreadsheet, client, target_spreadsheet_name=None, path='/Tableau
             # sub_df.to_sql('pmax_project_kpi_sub', engine,
             #               method=psql_insert_copy, if_exists='append', index=None)
 
-
     except Exception as e:
         print('Got ' + str(e) + f' while updating KPI for {spreadsheet} ')
 
 
-
-
-BASE_DIR=os.path.dirname(os.path.abspath(__file__))
-
-if __name__ == '__main__':
-
-    client=Client()
-    projects=client.list_spreadsheet_files_in_folder(
-        '1jQRJDeB369tnTVckeD-dueWOxtyReOy2')
-    successes={}
-    failures={}
-    # print(projects)
-    for project in projects:
-        if 'copy of' not in project.get('name').lower():
-            try:
-                # print(' '.join(['Getting data for project ', project.get(
-                #     'name'), '(id', project.get('id'), ')']))
-                raw_df=get_raw_data_sheet_to_df(
-                    spreadsheet=project.get('id'), client=client, cols_to_check=[
-                        'Charge Code', 'Client', 'Function', 'date',
-                        'Channel', 'revenue', 'cost', 'profit'
-                    ])
-                kpi_df=get_kpi_sheet_to_df(
-                    spreadsheet=project.get('id'), client=client, cols_to_check=[
-                        'Charge Code', 'Client', 'Function', 'date',
-                        'revenue', 'cost', 'profit'
-                    ])
-
-                project_name=project.get('name')
-                project_id=project.get('id')
-                raw_df.to_csv(os.path.join(BASE_DIR, 'raw_data_v2',
-                                           f'RawData2 - {project_name}.csv'), index=None)
-                kpi_df.to_csv(os.path.join(BASE_DIR, 'kpi_v2',
-                                           f'KPI2 - {project_name}.csv'), index=None)
-
-            except Exception as e:
-                print(' '.join(['Project', project.get(
-                    'name'), '(id', project.get('id')+'):']))
-                print(e)
-                failures[project.get('name')]=project.get('id')
-        else:
-            continue
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
