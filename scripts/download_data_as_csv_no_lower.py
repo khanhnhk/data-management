@@ -13,11 +13,18 @@ import io
 from io import StringIO
 import psycopg2
 import csv
+import re
 
-STRING_TO_EXCLUDE_IN_SUB = ['vertical', 'month', 'day', 'week', 'year']
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+STRING_TO_EXCLUDE_IN_SUB = ['vertical',
+                            'month', 'day', 'week', 'year', '_meta']
+ADDITIONAL_COLS_IN_SUB = ['channel', 'objective']
+MANDATORY_SUB_COLS = ['_ref_id', 'charge_code', 'date', '_meta_spreadsheetid']
 
 # AUTHORIZATION:
 creds = None
+SCOPES = ['https://www.googleapis.com/auth/contacts.readonly']
 # The file token.pickle stores the user's access and refresh tokens, and is
 # created automatically when the authorization flow completes for the first
 # time.
@@ -257,7 +264,7 @@ def update_sheet_title(spreadsheet, raw_title=None, kpi_title=None):
               'at ' + f'https://docs.google.com/spreadsheets/d/{project_id}')
 
 
-def update_raw_data(spreadsheet, client, copy=False, path='/Tableau Data New/Raw Data2', extract_cols=None, engine=None, error_list=None, update_sub=False, update_main=True):
+def update_raw_data(spreadsheet, client, copy=False, path='/Tableau Data New/Raw Data2', extract_cols=None, engine=None, error_list_raw=None, update_sub=False, update_main=True):
     if extract_cols is None:
         extract_cols = []
     else:
@@ -282,10 +289,10 @@ def update_raw_data(spreadsheet, client, copy=False, path='/Tableau Data New/Raw
 
         if update_sub:
             sub_df = pd.melt(df, id_vars=['_ref_id'], value_vars=[
-                x for x in list(df.columns) if x not in extract_cols and x not in ['_meta_spreadsheetid', '_meta_projectname', '_ref_id', ''] and not any(s in x for s in STRING_TO_EXCLUDE_IN_SUB)],
+                x for x in list(df.columns) if x not in ['_ref_id', ''] and not any(s in x for s in STRING_TO_EXCLUDE_IN_SUB)],
                 var_name='key', value_name='value', col_level=0).dropna(how='any')
             sub_df = sub_df.merge(
-                df[['_ref_id', 'charge_code', 'date', '_meta_spreadsheetid']], how='left', on='_ref_id')
+                df[[x for x in list(df.columns) if x in MANDATORY_SUB_COLS or x in ADDITIONAL_COLS_IN_SUB]], how='left', on='_ref_id')
             sub_df = sub_df[(sub_df['value'] != 0) & (sub_df['value'] != '')]
 
         if copy:
@@ -307,18 +314,18 @@ def update_raw_data(spreadsheet, client, copy=False, path='/Tableau Data New/Raw
                 sub_df.to_sql('pmax_project_raw_sub', engine,
                               method=psql_insert_copy, if_exists='append', index=None)
 
-            if spreadsheet in error_list:
-                error_list.remove(spreadsheet)
+            if spreadsheet in error_list_raw:
+                error_list_raw.remove(spreadsheet)
 
-        print(f'Updated RawData {project_name} (ID: {project_id})')
+            print(f'Updated RawData {project_name} (ID: {project_id})')
     except Exception as e:
         print('Got ' + str(e) +
               f' while updating Raw Data for {spreadsheet} )')
-        if error_list is not None:
-            error_list.append(spreadsheet)
+        if error_list_raw is not None:
+            error_list_raw.append(spreadsheet)
 
 
-def update_kpi(spreadsheet, client, target_spreadsheet_name=None, path='/Tableau Data New/KPI', copy=False, extract_cols=None, engine=None, error_list=None, update_sub=False, update_main=True):
+def update_kpi(spreadsheet, client, target_spreadsheet_name=None, path='/Tableau Data New/KPI', copy=False, extract_cols=None, engine=None, error_list_kpi=None, update_sub=False, update_main=True):
     if extract_cols is None:
         extract_cols = []
     else:
@@ -340,10 +347,10 @@ def update_kpi(spreadsheet, client, target_spreadsheet_name=None, path='/Tableau
 
         if update_sub:
             sub_df = pd.melt(df, id_vars=['_ref_id'], value_vars=[
-                x for x in list(df.columns) if x not in extract_cols and x not in ['_meta_spreadsheetid', '_meta_projectname', '_ref_id', ''] and not any(s in x for s in STRING_TO_EXCLUDE_IN_SUB)],
+                x for x in list(df.columns) if x not in ['_ref_id', ''] and not any(s in x for s in STRING_TO_EXCLUDE_IN_SUB)],
                 var_name='key', value_name='value', col_level=0).dropna(how='any')
             sub_df = sub_df.merge(
-                df[['_ref_id', 'charge_code', 'date', '_meta_spreadsheetid']], how='left', on='_ref_id')
+                df[[x for x in list(df.columns) if x in MANDATORY_SUB_COLS or x in ADDITIONAL_COLS_IN_SUB]], how='left', on='_ref_id')
             sub_df = sub_df[(sub_df['value'] != 0) & (sub_df['value'] != '')]
 
         if copy:
@@ -364,13 +371,90 @@ def update_kpi(spreadsheet, client, target_spreadsheet_name=None, path='/Tableau
                 # Update sub df:
                 sub_df.to_sql('pmax_project_kpi_sub', engine,
                               method=psql_insert_copy, if_exists='append', index=None)
-            if spreadsheet in error_list:
-                error_list.remove(spreadsheet)
+            if spreadsheet in error_list_kpi:
+                error_list_kpi.remove(spreadsheet)
 
     except Exception as e:
         print('Got ' + str(e) + f' while updating KPI for {spreadsheet} ')
-        if error_list is not None:
-            error_list.append(spreadsheet)
+        if error_list_kpi is not None:
+            error_list_kpi.append(spreadsheet)
 
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+def update_creative(spreadsheet, client, extract_cols=None, engine=None, error_list_raw=None, update_main=True):
+    if extract_cols is None:
+        extract_cols = []
+    else:
+        extract_cols = list(
+            set([re.sub(r'[^a-z]+', ' ', str(x).strip().lower()).replace(' ', '_').replace('.', '_') for x in extract_cols]))
+
+    try:
+
+        df = get_raw_data_sheet_to_df(spreadsheet=spreadsheet, client=client,
+                                      cols_to_check=extract_cols)
+
+        project_name = df['_meta_projectname'][0]
+        project_id = df['_meta_spreadsheetid'][0]
+
+        df.columns = [re.sub(r'[^a-z]+', ' ', str(x).strip().lower()).replace(' ', '_').replace('.', '_')
+                      for x in list(df.columns)]
+
+        df = df.loc[df['channel'].str.contains('creative', flags=re.IGNORECASE, na=False), ~df.columns.duplicated()]
+
+
+        if engine is not None:
+            if update_main:
+                # Update main df:
+                df = df.reindex(columns=[x for x in list(
+                    set(list(extract_cols) + ['_meta_spreadsheetid', '_meta_projectname', '_ref_id']))])
+                df.to_sql('pmax_creative_performance', engine,
+                          method=psql_insert_copy, if_exists='append', index=None)
+
+            if spreadsheet in error_list_raw:
+                error_list_raw.remove(spreadsheet)
+
+        print(f'Updated Creative RawData {project_name} (ID: {project_id})')
+    except Exception as e:
+        print('Got ' + str(e) +
+              f' while updating Creative Raw Data for {spreadsheet} )')
+        if error_list_raw is not None:
+            error_list_raw.append(spreadsheet)
+
+
+def update_planning(spreadsheet, client, extract_cols=None, engine=None, error_list_raw=None, update_main=True):
+    if extract_cols is None:
+        extract_cols = []
+    else:
+        extract_cols = list(
+            set([re.sub(r'[^a-z]+', ' ', str(x).strip().lower()).replace(' ', '_').replace('.', '_') for x in extract_cols]))
+
+    try:
+
+        df = get_raw_data_sheet_to_df(spreadsheet=spreadsheet, client=client,
+                                      cols_to_check=extract_cols)
+
+        project_name = df['_meta_projectname'][0]
+        project_id = df['_meta_spreadsheetid'][0]
+
+        df.columns = [re.sub(r'[^a-z]+', ' ', str(x).strip().lower()).replace(' ', '_').replace('.', '_')
+                      for x in list(df.columns)]
+
+        df = df.loc[df['channel'].str.contains('planning', flags=re.IGNORECASE, na=False), ~df.columns.duplicated()]
+
+
+        if engine is not None:
+            if update_main:
+                # Update main df:
+                df = df.reindex(columns=[x for x in list(
+                    set(list(extract_cols) + ['_meta_spreadsheetid', '_meta_projectname', '_ref_id']))])
+                df.to_sql('pmax_project_planning', engine,
+                          method=psql_insert_copy, if_exists='append', index=None)
+
+            if spreadsheet in error_list_raw:
+                error_list_raw.remove(spreadsheet)
+
+        print(f'Updated Planning RawData {project_name} (ID: {project_id})')
+    except Exception as e:
+        print('Got ' + str(e) +
+              f' while updating Planning Raw Data for {spreadsheet} )')
+        if error_list_raw is not None:
+            error_list_raw.append(spreadsheet)
